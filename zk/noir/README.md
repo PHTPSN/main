@@ -35,6 +35,35 @@ the private openings for the browser/native proving path.
 Synthetic vectors: [`fixtures/redacted_ancestry_vectors.json`](fixtures/redacted_ancestry_vectors.json).  
 Spec: [`docs/zk-redacted-ancestry-spec.md`](../../docs/zk-redacted-ancestry-spec.md).
 
+The annotated [`Prover.toml.example`](redacted_ancestry/Prover.toml.example)
+contains complete synthetic inputs for `ra-pos-001-valid-min-depth` from the
+fixture above. Every field is marked public or private, and the public hashes
+were computed by `redacted_ancestry_helper` using the fixture's private witness
+and `depth = 1`. All values are published test data, not real credentials.
+
+To execute the example with the Nargo version pinned in
+[`zk/toolchain.lock.json`](../toolchain.lock.json), run from the repository root
+(back up any local `Prover.toml` inputs before replacing them):
+
+```bash
+(cd zk/noir/redacted_ancestry && cp Prover.toml.example Prover.toml && nargo execute)
+```
+
+Execution passes when all supplied commitments, digests, the ancestry root,
+nullifier and domain tag match their circuit derivations; the operation is
+`redact`; and depth is one of `1`, `2`, `3`, `4`. The parent commitment,
+derivative digest, parameters digest, ancestry root and nullifier must be
+nonzero, as must `credential_secret`, `nullifier_secret`, `parent_blinding`
+and `redaction_seed`. The parent commitment must differ from the derivative
+digest. The example satisfies these conditions using the fixture's depth-1 case.
+
+Expected success lines (exit code `0`):
+
+```text
+[redacted_ancestry] Circuit witness successfully solved
+[redacted_ancestry] Witness saved to target/redacted_ancestry.gz
+```
+
 ```bash
 cd zk/noir/redacted_ancestry && nargo test
 cd zk/noir/redacted_ancestry_helper && nargo test
@@ -80,6 +109,57 @@ Key properties:
 - **Domain binding**: `HARPOCRATES_REVOCATION_V1` prevents cross-version replay.
 
 Spec: [`docs/zk-revocation-witness-spec.md`](../../docs/zk-revocation-witness-spec.md).
+
+The annotated [`Prover.toml.example`](revocation_witness/Prover.toml.example)
+uses `valid_non_revocation_witness` and the tree in
+[`fixtures/revocation_vectors.json`](fixtures/revocation_vectors.json).
+The synthetic credential secret is `12345`; the tree contains a zero sentinel
+and the Pedersen-hashed revoked identifiers for the seven fixture secrets:
+`33333`, `44444`, `55555`, `66666`, `77777`, `88888`, `99999`, in that order.
+All inputs are published synthetic test data, with every field marked public
+or private.
+
+From the repository root, with the pinned Nargo version (back up any local
+`Prover.toml` inputs before replacing them):
+
+```bash
+(cd zk/noir/revocation_witness && cp Prover.toml.example Prover.toml && nargo execute)
+```
+
+Execution passes when `credential_root = H([credential_secret])`,
+`nullifier = H([credential_secret, nullifier_secret])`, and `revocation_root`
+equals the depth-3 root reconstructed from all eight ordered leaves, where
+`H` is `std::hash::pedersen_hash`. The credential root must differ from every
+leaf. Changing a leaf without updating its root fails the root check; placing
+the credential root in a leaf and updating the tree root fails as `revoked`.
+
+The public revocation root commits to the whole list; it is not an individual
+credential's stored status. The registry manages these separately:
+`revoke_credential_root` updates one credential's status, while
+`set_revocation_root` publishes a list root. Revoking one credential does not
+automatically rebuild or publish the Merkle tree. The contract checks both the
+published root and the individual credential's active status.
+
+The example's `domain_separator` is the raw ASCII field value
+`HARPOCRATES_REVOCATION_V1`, left-padded to 32 bytes, matching the main circuit's
+tests and the contract's `REVOCATION_DOMAIN_SEPARATOR`. It intentionally does
+not use the helper test's hashed domain value or the fixture metadata's
+right-padded `_domain_separator_bytes`. Local circuit execution does not check
+the separator's value. On-chain acceptance additionally requires the expected
+domain, the stored revocation root, an active registered credential, a fresh
+nullifier and a proof accepted by the configured verifier.
+
+Expected success lines (compiler warnings may precede them; exit code `0`):
+
+```text
+[revocation_witness] Circuit witness successfully solved
+[revocation_witness] Witness saved to target/revocation_witness.gz
+```
+
+For both examples, these messages mean the inputs satisfy the circuit and a
+local witness was generated. `nargo execute` does not generate a cryptographic
+proof or perform the contract checks. `nargo test` uses its own test inputs, so
+it does not replace executing the copied example.
 
 ### `revocation_witness_helper`
 
