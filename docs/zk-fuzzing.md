@@ -284,3 +284,7 @@ across the five circuits with production assertions, in **89.412 seconds**.
 This measures the complete script, including baseline runs and temporary
 source copying; GitHub runner provisioning and toolchain installation are
 outside that measurement.
+
+The [checked-in issue #749 report](../zk/reports/issue-749/README.md) contains
+the per-circuit results, complete mutation inventory and reproduction steps
+for that source commit.
