@@ -671,6 +671,16 @@ pub enum ProofVerificationStatus {
     NotFound,
 }
 
+/// Additive status view; a missing effective ledger never implies validity.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProofStatusDetails {
+    pub status: ProofVerificationStatus,
+    /// First revocation ledger sequence, not the current query ledger or a
+    /// timestamp. `None` for other statuses and legacy revocations.
+    pub revoked_effective_ledger: Option<u32>,
+}
+
 /// Comprehensive proof assurance view combining status, tier, timestamp assurance,
 /// dispute count, envelope version, and issuer verifiability in a single call.
 #[contracttype]
@@ -1838,6 +1848,8 @@ pub struct InstanceTTLMaintained;
 pub enum DataKey {
     Admin,
     Proof(BytesN<32>),
+    /// First effective revocation ledger; retain/restore with the proof row.
+    ProofRevocationLedger(BytesN<32>),
     Video(BytesN<32>),
     Nullifier(BytesN<32>),
     CredentialRoot(BytesN<32>),
@@ -3701,6 +3713,25 @@ impl HarpocratesRegistry {
         }
     }
 
+    /// Return status with the recorded first effective revocation ledger.
+    ///
+    /// Read-only. Legacy revocations have no recorded sequence and return
+    /// `None`; querying or repeating a revocation must never invent one.
+    pub fn get_proof_status_details(env: Env, proof_id: BytesN<32>) -> ProofStatusDetails {
+        let status = Self::get_proof_status(env.clone(), proof_id.clone());
+        let revoked_effective_ledger = if status == ProofVerificationStatus::Revoked {
+            env.storage()
+                .persistent()
+                .get(&DataKey::ProofRevocationLedger(proof_id))
+        } else {
+            None
+        };
+        ProofStatusDetails {
+            status,
+            revoked_effective_ledger,
+        }
+    }
+
     /// Return the human-readable verification status of multiple proofs in a single
     /// batch query, efficiently retrieving them without exceeding Soroban read budgets.
     ///
@@ -4625,6 +4656,14 @@ impl HarpocratesRegistry {
         reason_code: u32,
     ) {
         let mut record = get_proof_record(env, proof_id);
+        // Only the first transition has a known effective ledger. In particular,
+        // do not backfill legacy revocations from the ledger of a later retry.
+        if record.status != STATUS_REVOKED {
+            env.storage().persistent().set(
+                &DataKey::ProofRevocationLedger(proof_id.clone()),
+                &env.ledger().sequence(),
+            );
+        }
         record.status = STATUS_REVOKED;
         env.storage()
             .persistent()
@@ -8455,6 +8494,8 @@ mod test_lineage;
 mod test_metadata_envelope;
 #[cfg(test)]
 mod test_pause;
+#[cfg(test)]
+mod test_proof_status_details;
 #[cfg(test)]
 mod test_receipt;
 #[cfg(test)]

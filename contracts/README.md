@@ -26,6 +26,60 @@ cargo test
 stellar contract build
 ```
 
+## Proof status and revocation ledger
+
+`get_proof_status(proof_id)` keeps returning `Valid`, `Revoked`, `Expired`, or
+`NotFound`. Existing status batch queries and assurance responses are unchanged.
+`get_proof_status_details(proof_id)` adds a detailed response:
+
+```rust
+pub struct ProofStatusDetails {
+    pub status: ProofVerificationStatus,
+    pub revoked_effective_ledger: Option<u32>,
+}
+```
+
+`revoked_effective_ledger` is the ledger sequence recorded when the proof first
+became revoked, not a Unix timestamp or the ledger in which a query runs. Single
+and batch revocation share this rule. Repeated revocation keeps the original
+effective ledger while preserving the existing lifecycle history and events.
+Revocation takes precedence over expiry, including after the expiry timestamp.
+
+For example, revoke a proof in ledger 100 and query it in ledger 150:
+
+```text
+Existing get_proof_status:         Revoked
+New get_proof_status_details:      { status: Revoked, revoked_effective_ledger: Some(100) }
+After another revocation at 150:   { status: Revoked, revoked_effective_ledger: Some(100) }
+```
+
+Valid, expired, and unknown proofs have `revoked_effective_ledger: None`. Proofs
+revoked before this feature also return `Revoked` with `None`: their historical
+ledger was not recorded. Neither querying nor repeating a legacy revocation
+backfills a ledger from the current sequence or guesses one from a timestamp.
+
+The effective ledger is stored under the additive persistent key
+`DataKey::ProofRevocationLedger(proof_id)`. Existing `ProofRecord` encodings,
+proof IDs, statement hashes, verifier-input encodings, and identity tiers are
+unchanged. No schema migration or new configuration is required. Storage
+maintenance must extend and restore this key together with `DataKey::Proof(proof_id)`
+for revoked proofs; read queries do not extend storage lifetimes. New code must
+not interpret an unknown effective ledger as a valid proof.
+
+Security: the existing admin authorization and atomic batch behavior apply to
+the new record. The query is public and read-only and exposes only existing
+status and a ledger number, never media, proof bytes, witnesses, or secrets.
+
+Focused coverage (synthetic fixtures only):
+
+```sh
+cd contracts
+cargo test -p harpocrates-registry test_proof_status_details
+cargo fmt --check
+cargo test
+cargo build --target wasm32v1-none --release
+```
+
 ## Schema Lifecycle
 
 Schemas are registered by the admin via `add_schema(admin, schema_hash, issuer_namespace, version, attribute_count)`. Each registration produces a `SchemaRecord` with `active = true`. The lifecycle is deliberately reversible so a schema deprecated by mistake can be restored without requiring a new hash:
@@ -300,6 +354,7 @@ set_revocation_root
 get_revocation_root
 check_non_revocation
 get_proof_status
+get_proof_status_details
 get_proof_history
 get_proof_history_at
 get_proof_history_count
